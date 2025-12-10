@@ -3,6 +3,8 @@
 ComfyUI custom node that acts as a llama-cpp-python wrapper, with support for vision models. It
 allows the user to generate text responses from prompts using llama.cpp.
 
+![Screenshot](assets/node_preview.png)
+
 ## Features
 
 - Load and use GGUF models (including vision models)
