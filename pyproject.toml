@@ -1,0 +1,11 @@
+[project]
+name = "comfyui-sg-llama-cpp"
+description = "llama-cpp-python wrapper, with support for vision models. It allows the user to generate text responses from prompts using llama.cpp."
+version = "1.0.0"
+
+[project.urls]
+Repository = "https://github.com/sebagallo/comfyui-sg-llama-cpp"
+
+[tool.comfy]
+PublisherId = "sebagallo"
+DisplayName = "comfyui-sg-llama-cpp"
