@@ -1,5 +1,6 @@
 import os
 import gc
+import inspect
 import torch
 import base64
 import io
@@ -7,15 +8,6 @@ from PIL import Image
 from llama_cpp import Llama, llama_backend_free
 from llama_cpp.llama_chat_format import (
     Llava15ChatHandler,
-    Llava16ChatHandler,
-    ObsidianChatHandler,
-    MoondreamChatHandler,
-    NanoLlavaChatHandler,
-    Llama3VisionAlphaChatHandler,
-    MiniCPMv26ChatHandler,
-    Gemma3ChatHandler,
-    Qwen25VLChatHandler,
-    Qwen3VLChatHandler,
     LlamaChatCompletionHandlerRegistry,
 )
 import folder_paths
@@ -107,19 +99,14 @@ def _cleanup_global_llm(mode: str):
             gc.collect()
 
 
-# Mapping of chat formats to vision chat handlers
-VISION_HANDLERS: Dict[str, Type] = {
-    "vision-llava15": Llava15ChatHandler,
-    "vision-llava16": Llava16ChatHandler,
-    "vision-obsidian": ObsidianChatHandler,
-    "vision-moondream": MoondreamChatHandler,
-    "vision-nanollava": NanoLlavaChatHandler,
-    "vision-llama3visionalpha": Llama3VisionAlphaChatHandler,
-    "vision-minicpmv26": MiniCPMv26ChatHandler,
-    "vision-gemma3": Gemma3ChatHandler,
-    "vision-qwen25vl": Qwen25VLChatHandler,
-    "vision-qwen3vl": Qwen3VLChatHandler,
-}
+# Mapping of chat formats to vision chat handlers (dynamically discovered)
+import llama_cpp.llama_chat_format as lcf
+
+VISION_HANDLERS = {}
+for name, obj in inspect.getmembers(lcf):
+    if inspect.isclass(obj) and issubclass(obj, lcf.Llava15ChatHandler):
+        vision_name = f"vision-{name.lower().replace('chathandler', '')}"
+        VISION_HANDLERS[vision_name] = obj
 
 
 class LlamaCPPModelLoader(ComfyNodeABC):
