@@ -228,7 +228,7 @@ class LlamaCPPOptions(ComfyNodeABC):
         return {
             "optional": {
                 "n_gpu_layers": ("INT", {"default": 0, "min": -1, "max": 100, "tooltip": "Number of GPU layers to use"}),
-                "n_ctx": ("INT", {"default": 2048, "min": 1, "max": 262144, "tooltip": "Context window size"}),
+                "n_ctx": ("INT", {"default": 2048, "min": 0, "max": 262144, "tooltip": "Context window size"}),
                 "n_threads": ("INT", {"default": -1, "min": -1, "max": 256, "tooltip": "Number of threads (-1 for auto)"}),
                 "n_batch": ("INT", {"default": 512, "min": 1, "max": 16384, "tooltip": "Batch size"}),
                 "n_ubatch": ("INT", {"default": 512, "min": 1, "max": 16384, "tooltip": "Micro batch size"}),
