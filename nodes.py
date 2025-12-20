@@ -95,13 +95,52 @@ def _cleanup_global_llm(mode: str):
     # Common cleanup for all non-persistent modes
     if _global_llm is not None:
         # Clean up chat_handler if it exists (for vision models)
-        if _global_llm.chat_handler is not None:
+        if hasattr(_global_llm, "chat_handler") and _global_llm.chat_handler is not None:
             try:
+                chat_handler = _global_llm.chat_handler
+                
+                # Primary Fix: Close ExitStack if present (used in newer llama-cpp-python versions)
+                # This triggers the callback to mtmd_free -> mtmd_cpp.mtmd_free
+                if hasattr(chat_handler, "_exit_stack") and chat_handler._exit_stack is not None:
+                    try:
+                        chat_handler._exit_stack.close()
+                    except Exception:
+                        pass
+
+                # Secondary Fix: Manual cleanup of attributes as fallback
+                # Attempt to find and close the CLIP/mmproj model embedded in the handler
+                clip_attrs = ["clip_model", "_clip_model", "mmproj", "_mmproj", "clf"]
+                
+                for attr_name in clip_attrs:
+                    if hasattr(chat_handler, attr_name):
+                        attr = getattr(chat_handler, attr_name)
+                        if attr is not None:
+                            # Try to close/free the model if a method exists
+                            if hasattr(attr, "close"):
+                                try:
+                                    attr.close()
+                                except Exception:
+                                    pass
+                            elif hasattr(attr, "__del__"):
+                                try:
+                                    attr.__del__()
+                                except Exception:
+                                    pass
+                                    
+                            # Explicitly remove the attribute to break reference cycles
+                            setattr(chat_handler, attr_name, None)
+                            
                 _global_llm.chat_handler.close()
             except Exception:
                 pass  # Ignore cleanup errors for chat_handler
-            del _global_llm.chat_handler
-            _global_llm.chat_handler = None
+            
+            # Remove the handler callback/reference from the LLM if possible/accessible
+            if hasattr(_global_llm, "chat_handler"):
+                del _global_llm.chat_handler
+            # _global_llm might not have chat_handler attribute in strict sense if it was just in kwargs,
+            # but we are cleaning up the attribute we accessed.
+            
+            gc.collect()
             gc.collect()
         try:
             _global_llm.close()
