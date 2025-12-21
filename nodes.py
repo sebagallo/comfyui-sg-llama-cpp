@@ -267,8 +267,8 @@ class LlamaCPPOptions(ComfyNodeABC):
 
     def get_options(self, **kwargs) -> tuple:
         try:
-            # Filter out None/empty values
-            options = {k: v for k, v in kwargs.items() if v is not None and v != "" and v != -1}
+            # Filter out None/empty values (FIXED: removed v != -1 check)
+            options = {k: v for k, v in kwargs.items() if v is not None and v != ""}
 
             return (options,)
 
@@ -289,6 +289,7 @@ class LlamaCPPEngine(ComfyNodeABC):
                 "options": ("LLAMA_OPTIONS", {"tooltip": "Model options from Options node"}),
                 "system_prompt": ("STRING", {"multiline": True, "default": "", "tooltip": "System prompt"}),
                 "memory_cleanup": (["close", "backend_free", "full_cleanup", "persistent"], {"default": "close", "tooltip": "Memory cleanup method after generation"}),
+                "response_format": (["text", "json_object"], {"default": "text", "tooltip": "Output format (json_object forces valid JSON)"}),
                 "max_tokens": ("INT", {"default": 512, "min": 1, "max": 262144, "tooltip": "Maximum tokens to generate"}),
                 "temperature": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 10.0, "step": 0.01, "tooltip": "Sampling temperature"}),
                 "top_p": ("FLOAT", {"default": 0.95, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Top-p sampling"}),
@@ -303,7 +304,7 @@ class LlamaCPPEngine(ComfyNodeABC):
     FUNCTION = "generate"
     CATEGORY = "LlamaCPP"
 
-    def generate(self, model: Dict[str, Any], prompt: str, image: torch.Tensor = None, options: Dict[str, Any] = None, system_prompt: str = "", memory_cleanup: str = "close", max_tokens: int = 128, temperature: float = 0.8, top_p: float = 0.95, top_k: int = 40, repeat_penalty: float = 1.1, seed: int = -1) -> tuple:
+    def generate(self, model: Dict[str, Any], prompt: str, image: torch.Tensor = None, options: Dict[str, Any] = None, system_prompt: str = "", memory_cleanup: str = "close", response_format: str = "text", max_tokens: int = 128, temperature: float = 0.8, top_p: float = 0.95, top_k: int = 40, repeat_penalty: float = 1.1, seed: int = -1) -> tuple:
         global _global_llm
         try:
             # Validate inputs
@@ -368,6 +369,9 @@ class LlamaCPPEngine(ComfyNodeABC):
                 _cleanup_global_llm(memory_cleanup)
                 _global_llm = Llama(**llama_kwargs)
 
+            # Prepare response_format parameter
+            response_format_param = {"type": response_format} if response_format == "json_object" else None
+
             # Generate response using global LLM
             response = _global_llm.create_chat_completion(
                 messages=messages,
@@ -377,6 +381,7 @@ class LlamaCPPEngine(ComfyNodeABC):
                 top_k=top_k,
                 repeat_penalty=repeat_penalty,
                 seed=seed,
+                response_format=response_format_param,
             )
 
             # Extract the response text
