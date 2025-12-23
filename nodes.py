@@ -175,6 +175,11 @@ for name, obj in inspect.getmembers(lcf):
         vision_name = f"vision-{name.lower().replace('chathandler', '')}"
         VISION_HANDLERS[vision_name] = obj
 
+# Add explicit mappings for Qwen models to handle version variations
+VISION_HANDLERS["vision-qwen2vl"] = getattr(lcf, "Qwen25VLChatHandler", VISION_HANDLERS.get("vision-qwen25vl"))
+VISION_HANDLERS["vision-qwen25vl"] = getattr(lcf, "Qwen25VLChatHandler", VISION_HANDLERS.get("vision-qwen25vl"))
+VISION_HANDLERS["vision-qwen3vl"] = getattr(lcf, "Qwen3VLChatHandler", VISION_HANDLERS.get("vision-qwen3vl"))
+
 
 class LlamaCPPModelLoader(ComfyNodeABC):
     @classmethod
@@ -356,7 +361,33 @@ class LlamaCPPEngine(ComfyNodeABC):
             # Handle vision models: use chat_handler based on chat_format
             if vision_enabled:
                 handler_class = VISION_HANDLERS.get(chat_format, Llava15ChatHandler)
-                chat_handler = handler_class(clip_model_path=model["mmproj_model_path"])
+                
+                    # Get handler init signature to determine what parameters it accepts
+                handler_sig = inspect.signature(handler_class.__init__)
+                handler_params = {}
+                    
+                    # Check if handler uses clip_model_path or kwargs-based approach
+                if "clip_model_path" in handler_sig.parameters:
+                    handler_params["clip_model_path"] = model["mmproj_model_path"]
+                elif "kwargs" in str(handler_sig):
+                        # Qwen3VL-style: uses **kwargs to pass clip_model_path
+                    handler_params["clip_model_path"] = model["mmproj_model_path"]
+                    
+                    # Add optional parameters if the handler supports them
+                if "verbose" in handler_sig.parameters:
+                    handler_params["verbose"] = options.get("verbose", False)
+                if "use_gpu" in handler_sig.parameters:
+                    handler_params["use_gpu"] = True
+                if "force_reasoning" in handler_sig.parameters:
+                    handler_params["force_reasoning"] = False
+                if "add_vision_id" in handler_sig.parameters:
+                    handler_params["add_vision_id"] = True
+                if "image_min_tokens" in handler_sig.parameters:
+                    handler_params["image_min_tokens"] = -1
+                if "image_max_tokens" in handler_sig.parameters:
+                    handler_params["image_max_tokens"] = -1
+                
+                chat_handler = handler_class(**handler_params)
                 llama_kwargs["chat_handler"] = chat_handler
                 # Remove chat_format when using vision handler
                 llama_kwargs.pop("chat_format", None)
