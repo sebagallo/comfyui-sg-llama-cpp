@@ -135,7 +135,7 @@ By default, the node loads GGUF models from ComfyUI's `text_encoders` folder. Yo
 
 ## Requirements
 
-- llama-cpp-python (from https://github.com/JamePeng/llama-cpp-python)
+- llama-cpp-python (from https://github.com/JamePeng/llama-cpp-python, make sure to install the right version for your hardware and torch/cuda version)
 
 ## License
 
