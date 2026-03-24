@@ -2,7 +2,6 @@ import os
 import gc
 import inspect
 import torch
-import base64
 import sys
 import json
 from llama_cpp import Llama, llama_backend_free
@@ -10,11 +9,12 @@ from llama_cpp.llama_chat_format import LlamaChatCompletionHandlerRegistry
 try:
     from llama_cpp.llama_chat_format import MTMDChatHandler
 except ImportError:
+    # Support for older llama-cpp-python versions
     from llama_cpp.llama_chat_format import Llava15ChatHandler
     MTMDChatHandler = Llava15ChatHandler
 import folder_paths
-from comfy_api.latest import ComfyExtension, io, ui
-from typing import Dict, Any, List, Type
+from comfy_api.latest import io
+from typing import Dict, Any, List
 from .utils import image_to_data_uri
 
 # Config file path
@@ -67,25 +67,6 @@ def find_model_path(model_name: str) -> str:
 
 # Global LLM instance for persistence
 _global_llm = None
-
-def _convert_image_to_data_uri(image_tensor: torch.Tensor) -> str:
-    """Convert a ComfyUI image tensor to a base64 data URI for vision models."""
-    try:
-        to_pil = ToPILImage()
-        # ComfyUI images are (B, H, W, C), select first batch and permute to (C, H, W)
-        pil_img = to_pil(image_tensor[0].permute(2, 0, 1))
-        # Convert to base64
-        buffered = IO.BytesIO()
-        pil_img.save(buffered, format="PNG")
-        img_base64 = base64.b64encode(buffered.getvalue()).decode()
-        data_uri = f"data:image/png;base64,{img_base64}"
-        # Clean up memory
-        buffered.close()
-        del pil_img
-        return data_uri
-
-    except Exception as e:
-        raise ValueError(f"Failed to convert image tensor to data URI: {str(e)}")
 
 def _cleanup_global_llm(mode: str):
     """Helper function to cleanup the global LLM based on mode."""
