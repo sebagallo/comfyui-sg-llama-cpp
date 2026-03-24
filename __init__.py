@@ -1,15 +1,15 @@
 from .nodes import LlamaCPPModelLoader, LlamaCPPOptions, LlamaCPPEngine, LlamaCPPMemoryCleanup
+from comfy_api.latest import ComfyExtension, io
 
-NODE_CLASS_MAPPINGS = {
-    "LlamaCPPModelLoader": LlamaCPPModelLoader,
-    "LlamaCPPOptions": LlamaCPPOptions,
-    "LlamaCPPEngine": LlamaCPPEngine,
-    "LlamaCPPMemoryCleanup": LlamaCPPMemoryCleanup,
-}
+class SGLlamaExtension(ComfyExtension):
+    """Extension for Llama-cpp nodes."""
+    async def get_node_list(self) -> list[type[io.ComfyNode]]:
+        return [
+            LlamaCPPModelLoader,
+            LlamaCPPOptions,
+            LlamaCPPEngine,
+            LlamaCPPMemoryCleanup,
+        ]
 
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "LlamaCPPModelLoader": "Llama CPP Model Loader",
-    "LlamaCPPOptions": "Llama CPP Options",
-    "LlamaCPPEngine": "Llama CPP Engine",
-    "LlamaCPPMemoryCleanup": "Llama CPP Memory Cleanup",
-}
+async def comfy_entrypoint() -> SGLlamaExtension:
+    return SGLlamaExtension()

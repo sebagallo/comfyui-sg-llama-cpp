@@ -3,18 +3,19 @@ import gc
 import inspect
 import torch
 import base64
-import io
+import sys
 import json
-from PIL import Image
-from torchvision.transforms import ToPILImage
 from llama_cpp import Llama, llama_backend_free
-from llama_cpp.llama_chat_format import (
-    Llava15ChatHandler,
-    LlamaChatCompletionHandlerRegistry,
-)
+from llama_cpp.llama_chat_format import LlamaChatCompletionHandlerRegistry
+try:
+    from llama_cpp.llama_chat_format import MTMDChatHandler
+except ImportError:
+    from llama_cpp.llama_chat_format import Llava15ChatHandler
+    MTMDChatHandler = Llava15ChatHandler
 import folder_paths
-from comfy.comfy_types import IO, ComfyNodeABC, InputTypeDict
+from comfy_api.latest import ComfyExtension, io, ui
 from typing import Dict, Any, List, Type
+from .utils import image_to_data_uri
 
 # Config file path
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'config.json')
@@ -74,7 +75,7 @@ def _convert_image_to_data_uri(image_tensor: torch.Tensor) -> str:
         # ComfyUI images are (B, H, W, C), select first batch and permute to (C, H, W)
         pil_img = to_pil(image_tensor[0].permute(2, 0, 1))
         # Convert to base64
-        buffered = io.BytesIO()
+        buffered = IO.BytesIO()
         pil_img.save(buffered, format="PNG")
         img_base64 = base64.b64encode(buffered.getvalue()).decode()
         data_uri = f"data:image/png;base64,{img_base64}"
@@ -171,14 +172,15 @@ import llama_cpp.llama_chat_format as lcf
 
 VISION_HANDLERS = {}
 for name, obj in inspect.getmembers(lcf):
-    if inspect.isclass(obj) and issubclass(obj, lcf.Llava15ChatHandler):
+    if inspect.isclass(obj) and issubclass(obj, MTMDChatHandler):
         vision_name = f"vision-{name.lower().replace('chathandler', '')}"
         VISION_HANDLERS[vision_name] = obj
 
 
-class LlamaCPPModelLoader(ComfyNodeABC):
+class LlamaCPPModelLoader(io.ComfyNode):
+    """Loads a GGUF model and optional mmproj for vision."""
     @classmethod
-    def INPUT_TYPES(cls) -> InputTypeDict:
+    def define_schema(cls) -> io.Schema:
         model_list = scan_gguf_models_in_folders()
 
         # Filter models based on criteria (case-insensitive)
@@ -196,22 +198,22 @@ class LlamaCPPModelLoader(ComfyNodeABC):
         vision_formats = list(VISION_HANDLERS.keys())
         chat_formats = sorted(base_chat_formats + vision_formats)
 
-        return {
-            "required": {
-                "model_name": (model_name_list if model_name_list else ["No GGUF models found"], {"tooltip": "Select GGUF model file"}),
-            },
-            "optional": {
-                "chat_format": (chat_formats, {"default": "llama-2", "tooltip": "Chat format template"}),
-                "mmproj_model_name": (mmproj_list, {"default": "None", "tooltip": "Multi-modal projector model for vision (select 'None' to disable)"}),
-            }
-        }
+        return io.Schema(
+            node_id="LlamaCPPModelLoader",
+            display_name="Llama CPP Model Loader",
+            category="LlamaCPP",
+            inputs=[
+                io.Combo.Input("model_name", options=model_name_list if model_name_list else ["No GGUF models found"], tooltip="Select GGUF model file"),
+                io.Combo.Input("chat_format", options=chat_formats, default="llama-2", tooltip="Chat format template", optional=True),
+                io.Combo.Input("mmproj_model_name", options=mmproj_list, default="None", tooltip="Multi-modal projector model for vision (select 'None' to disable)", optional=True),
+            ],
+            outputs=[
+                io.Custom("LLAMA_MODEL").Output(display_name="MODEL")
+            ]
+        )
 
-    RETURN_TYPES = ("LLAMA_MODEL",)
-    RETURN_NAMES = ("model",)
-    FUNCTION = "load_model"
-    CATEGORY = "LlamaCPP"
-
-    def load_model(self, model_name: str, chat_format: str = "llama-2", mmproj_model_name: str = "None") -> tuple:
+    @classmethod
+    def execute(cls, model_name: str, chat_format: str = "llama-2", mmproj_model_name: str = "None") -> io.NodeOutput:
         try:
             model_path = find_model_path(model_name)
 
@@ -234,83 +236,96 @@ class LlamaCPPModelLoader(ComfyNodeABC):
                 model_info["mmproj_model_path"] = mmproj_model_path
 
             # Return model info dict
-            return (model_info,)
+            return io.NodeOutput(model_info)
 
         except Exception as e:
             raise RuntimeError(f"Failed to load model: {str(e)}")
 
 
-class LlamaCPPOptions(ComfyNodeABC):
+class LlamaCPPOptions(io.ComfyNode):
+    """Configures Llama-cpp-python initialization parameters."""
     @classmethod
-    def INPUT_TYPES(cls) -> InputTypeDict:
-        return {
-            "optional": {
-                "n_gpu_layers": ("INT", {"default": -1, "min": -1, "max": 100, "tooltip": "Number of GPU layers to use"}),
-                "n_ctx": ("INT", {"default": 2048, "min": 0, "max": 262144, "tooltip": "Context window size (0 for max)"}),
-                "n_threads": ("INT", {"default": -1, "min": -1, "max": 256, "tooltip": "Number of threads (-1 for auto)"}),
-                "n_threads_batch": ("INT", {"default": -1, "min": -1, "max": 256, "tooltip": "Number of threads per batch (-1 for auto)"}),
-                "n_batch": ("INT", {"default": 512, "min": 1, "max": 16384, "tooltip": "Batch size"}),
-                "n_ubatch": ("INT", {"default": 512, "min": 1, "max": 16384, "tooltip": "Micro batch size"}),
-                "main_gpu": ("INT", {"default": 0, "min": 0, "max": 100, "tooltip": "GPU ID for main device"}),
-                "offload_kqv": (IO.BOOLEAN, {"default": True, "tooltip": "Enable offloading of K/Q/V tensors to GPU", "label_on": "Enabled", "label_off": "Disabled"}),
-                "numa": (IO.BOOLEAN, {"default": False, "tooltip": "Enable NUMA affinity", "label_on": "Enabled", "label_off": "Disabled"}),
-                "use_mmap": (IO.BOOLEAN, {"default": True, "tooltip": "Enable memory-mapped files", "label_on": "Enabled", "label_off": "Disabled"}),
-                "use_mlock": (IO.BOOLEAN, {"default": False, "tooltip": "Enable lock for memory-mapped files", "label_on": "Enabled", "label_off": "Disabled"}),
-                "verbose": (IO.BOOLEAN, {"default": False, "tooltip": "Enable verbose logging", "label_on": "Enabled", "label_off": "Disabled"}),
-                "vision_use_gpu": (IO.BOOLEAN, {"default": True, "tooltip": "Vision: Enable GPU for vision handler", "label_on": "Enabled", "label_off": "Disabled"}),
-                "vision_image_min_tokens": ("INT", {"default": -1, "min": -1, "max": 16384, "tooltip": "Vision: Minimum image tokens (-1 for default)"}),
-                "vision_image_max_tokens": ("INT", {"default": -1, "min": -1, "max": 16384, "tooltip": "Vision: Maximum image tokens (-1 for default)"}),
-                "vision_enable_thinking": (IO.BOOLEAN, {"default": False, "tooltip": "Vision: Enable thinking (GLMV)", "label_on": "Enabled", "label_off": "Disabled"}),
-                "vision_force_reasoning": (IO.BOOLEAN, {"default": False, "tooltip": "Vision: Force reasoning (QwenVL)", "label_on": "Enabled", "label_off": "Disabled"}),
-                "vision_add_vision_id": (IO.BOOLEAN, {"default": True, "tooltip": "Vision: Add vision ID (QwenVL)", "label_on": "Enabled", "label_off": "Disabled"}),
-            }
-        }
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="LlamaCPPOptions",
+            display_name="Llama CPP Options",
+            category="LlamaCPP",
+            inputs=[
+                io.Int.Input("n_gpu_layers", default=-1, min=-1, max=100, tooltip="Number of GPU layers to use", optional=True),
+                io.Int.Input("n_ctx", default=2048, min=-1, max=262144, tooltip="Context window size (0 for max, -1 for default)", optional=True),
+                io.Int.Input("n_threads", default=-1, min=-1, max=256, tooltip="Number of threads (-1 for auto)", optional=True),
+                io.Int.Input("n_threads_batch", default=-1, min=-1, max=256, tooltip="Number of threads per batch (-1 for auto)", optional=True),
+                io.Int.Input("n_batch", default=2048, min=-1, max=16384, tooltip="Batch size (-1 for default)", optional=True),
+                io.Int.Input("n_ubatch", default=512, min=-1, max=16384, tooltip="Micro batch size (-1 for default)", optional=True),
+                io.Int.Input("main_gpu", default=0, min=-1, max=100, tooltip="GPU ID for main device (-1 for default)", optional=True),
+                io.Boolean.Input("offload_kqv", default=True, tooltip="Enable offloading of K/Q/V tensors to GPU", optional=True),
+                io.Boolean.Input("numa", default=False, tooltip="Enable NUMA affinity", optional=True),
+                io.Boolean.Input("use_mmap", default=True, tooltip="Enable memory-mapped files", optional=True),
+                io.Boolean.Input("use_mlock", default=False, tooltip="Enable lock for memory-mapped files", optional=True),
+                io.Boolean.Input("use_direct_io", default=False, tooltip="Enable direct I/O for library (Linux only)", optional=True),
+                io.Boolean.Input("verbose", default=False, tooltip="Enable verbose logging", optional=True),
+                io.Boolean.Input("vision_use_gpu", default=True, tooltip="Vision: Enable GPU for vision handler", optional=True),
+                io.Int.Input("vision_image_min_tokens", default=-1, min=-1, max=16384, tooltip="Vision: Minimum image tokens (-1 for default)", optional=True),
+                io.Int.Input("vision_image_max_tokens", default=-1, min=-1, max=16384, tooltip="Vision: Maximum image tokens (-1 for default)", optional=True),
+                io.Boolean.Input("vision_enable_thinking", default=False, tooltip="Vision: Enable thinking", optional=True),
+                io.Boolean.Input("vision_force_reasoning", default=False, tooltip="Vision: Force reasoning", optional=True),
+                io.Boolean.Input("vision_add_vision_id", default=True, tooltip="Vision: Add vision ID", optional=True),
+            ],
+            outputs=[
+                io.Custom("LLAMA_OPTIONS").Output(display_name="OPTIONS")
+            ]
+        )
 
-    RETURN_TYPES = ("LLAMA_OPTIONS",)
-    RETURN_NAMES = ("options",)
-    FUNCTION = "get_options"
-    CATEGORY = "LlamaCPP"
-
-    def get_options(self, **kwargs) -> tuple:
+    @classmethod
+    def execute(cls, **kwargs) -> io.NodeOutput:
         try:
             # Filter out None/empty values
             options = {k: v for k, v in kwargs.items() if v is not None and v != ""}
 
-            return (options,)
+            return io.NodeOutput(options)
 
         except Exception as e:
             raise RuntimeError(f"Failed to process options: {str(e)}")
 
 
-class LlamaCPPEngine(ComfyNodeABC):
+class LlamaCPPEngine(io.ComfyNode):
+    """Executes chat completion using the loaded model."""
     @classmethod
-    def INPUT_TYPES(cls) -> InputTypeDict:
-        return {
-            "required": {
-                "model": ("LLAMA_MODEL", {"tooltip": "Loaded Llama model from Model Loader"}),
-                "prompt": ("STRING", {"multiline": True, "tooltip": "User prompt for chat completion"}),
-            },
-            "optional": {
-                "image": ("IMAGE", {"tooltip": "Input image for vision models"}),
-                "options": ("LLAMA_OPTIONS", {"tooltip": "Model options from Options node"}),
-                "system_prompt": ("STRING", {"multiline": True, "default": "", "tooltip": "System prompt"}),
-                "memory_cleanup": (["close", "backend_free", "full_cleanup", "persistent"], {"default": "close", "tooltip": "Memory cleanup method after generation"}),
-                "response_format": (["text", "json_object"], {"default": "text", "tooltip": "Output format (json_object forces valid JSON)"}),
-                "max_tokens": ("INT", {"default": 512, "min": 1, "max": 262144, "tooltip": "Maximum tokens to generate"}),
-                "temperature": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 10.0, "step": 0.01, "tooltip": "Sampling temperature"}),
-                "top_p": ("FLOAT", {"default": 0.95, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Top-p sampling"}),
-                "top_k": ("INT", {"default": 100, "min": 0, "max": 400, "tooltip": "Top-k sampling"}),
-                "repeat_penalty": ("FLOAT", {"default": 1.0, "min": 1.0, "max": 2.0, "step": 0.01, "tooltip": "Repeat penalty"}),
-                "seed": ("INT", {"default": -1, "min": -1, "tooltip": "Random seed (-1 for random)"}),
-            }
-        }
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="LlamaCPPEngine",
+            display_name="Llama CPP Engine",
+            category="LlamaCPP",
+            inputs=[
+                io.Custom("LLAMA_MODEL").Input("model", tooltip="Loaded Llama model from Model Loader"),
+                io.String.Input("prompt", multiline=True, tooltip="User prompt for chat completion"),
+                io.Image.Input("images", tooltip="Input image(s) for vision models (supports batches)", optional=True),
+                io.Custom("LLAMA_OPTIONS").Input("options", tooltip="Model options from Options node", optional=True),
+                io.String.Input("system_prompt", multiline=True, default="", tooltip="System prompt", optional=True),
+                io.Combo.Input("memory_cleanup", options=["close", "backend_free", "full_cleanup", "persistent"], default="close", tooltip="Memory cleanup method after generation", optional=True),
+                io.DynamicCombo.Input("response_format", options=[
+                    io.DynamicCombo.Option("text", inputs=[]),
+                    io.DynamicCombo.Option("json_object", inputs=[
+                        io.String.Input("json_schema", multiline=True, default="{}", tooltip="JSON Schema to enforce if json_object is selected", optional=True),
+                    ])
+                ], tooltip="Output format (json_object forces valid JSON)", optional=True),
+                io.Int.Input("max_tokens", default=512, min=1, max=262144, tooltip="Maximum tokens to generate", optional=True),
+                io.Float.Input("temperature", default=0.2, min=0.0, max=10.0, step=0.01, tooltip="Sampling temperature", optional=True),
+                io.Float.Input("top_p", default=0.95, min=0.0, max=1.0, step=0.01, tooltip="Top-p sampling", optional=True),
+                io.Int.Input("top_k", default=40, min=0, max=400, tooltip="Top-k sampling", optional=True),
+                io.Float.Input("min_p", default=0.05, min=0.0, max=1.0, step=0.01, tooltip="Min-p sampling", optional=True),
+                io.Float.Input("repeat_penalty", default=1.1, min=1.0, max=5.0, step=0.01, tooltip="Repeat penalty", optional=True),
+                io.Float.Input("present_penalty", default=0.0, min=0.0, max=5.0, step=0.01, tooltip="Present penalty", optional=True),
+                io.Float.Input("frequency_penalty", default=0.0, min=0.0, max=5.0, step=0.01, tooltip="Frequency penalty", optional=True),
+                io.Int.Input("seed", default=1, min=-sys.maxsize, max=sys.maxsize, control_after_generate=True, tooltip="Random seed", optional=True),
+            ],
+            outputs=[
+                io.String.Output(display_name="RESPONSE")
+            ]
+        )
 
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("response",)
-    FUNCTION = "generate"
-    CATEGORY = "LlamaCPP"
-
-    def generate(self, model: Dict[str, Any], prompt: str, image: torch.Tensor = None, options: Dict[str, Any] = None, system_prompt: str = "", memory_cleanup: str = "close", response_format: str = "text", max_tokens: int = 128, temperature: float = 0.8, top_p: float = 0.95, top_k: int = 40, repeat_penalty: float = 1.1, seed: int = -1) -> tuple:
+    @classmethod
+    def execute(cls, model: Dict[str, Any], prompt: str, images: torch.Tensor = None, options: Dict[str, Any] = None, system_prompt: str = "", memory_cleanup: str = "close", response_format: Dict[str, Any] = {"type": "text"}, max_tokens: int = 512, temperature: float = 0.2, top_p: float = 0.95, top_k: int = 40, min_p: float = 0.05, repeat_penalty: float = 1.1, present_penalty: float = 0.0, frequency_penalty: float = 0.0, seed: int = -1) -> io.NodeOutput:
         global _global_llm
         try:
             # Validate inputs
@@ -337,15 +352,19 @@ class LlamaCPPEngine(ComfyNodeABC):
                 messages.append({"role": "system", "content": system_prompt.strip()})
 
             # Create user message content
-            user_content = prompt.strip()
+            user_content = [{"type": "text", "text": prompt.strip()}]
 
-            # If vision is enabled and image is provided, convert image and create structured content
-            if vision_enabled and image is not None:
-                image_data_uri = _convert_image_to_data_uri(image)
-                user_content = [
-                    {"type": "image_url", "image_url": image_data_uri},
-                    {"type": "text", "text": prompt.strip()}
-                ]
+            # If vision is enabled and images are provided, convert images and create structured content
+            if vision_enabled and images is not None:
+                # images is (B, H, W, C)
+                B = images.shape[0]
+                for i in range(B):
+                    img_tensor = images[i]  # (H, W, C)
+                    data_uri = image_to_data_uri(img_tensor)
+                    user_content.append({
+                        "type": "image_url",
+                        "image_url": {"url": data_uri}
+                    })
 
             messages.append({"role": "user", "content": user_content})
 
@@ -358,14 +377,17 @@ class LlamaCPPEngine(ComfyNodeABC):
             # Add options
             for k, v in options.items():
                 if not k.startswith("vision_"):
+                    # Whitelist for -1 values: only n_gpu_layers is allowed to pass -1
+                    if v == -1 and k != "n_gpu_layers":
+                        continue
                     llama_kwargs[k] = v
 
             # Handle vision models: use chat_handler based on chat_format
             if vision_enabled:
-                handler_class = VISION_HANDLERS.get(chat_format, Llava15ChatHandler)
+                handler_class = VISION_HANDLERS.get(chat_format, MTMDChatHandler)
                 
-                # Dynamically get parameters from the base class and actual class (Llava15ChatHandler)
-                base_sig = inspect.signature(Llava15ChatHandler)
+                # Dynamically get parameters from the base class and actual class (MTMDChatHandler)
+                base_sig = inspect.signature(MTMDChatHandler)
                 handler_params = set(base_sig.parameters.keys())
                 handler_sig = inspect.signature(handler_class)
                 handler_params.update(handler_sig.parameters.keys())
@@ -380,6 +402,9 @@ class LlamaCPPEngine(ComfyNodeABC):
                     if k.startswith("vision_"):
                         param_name = k.replace("vision_", "")
                         if param_name in handler_params:
+                            # Skip -1 values for vision handlers
+                            if v == -1:
+                                continue
                             handler_kwargs[param_name] = v
 
                 chat_handler = handler_class(**handler_kwargs)
@@ -396,7 +421,22 @@ class LlamaCPPEngine(ComfyNodeABC):
                 _global_llm = Llama(**llama_kwargs)
 
             # Prepare response_format parameter
-            response_format_param = {"type": response_format} if response_format is not None else None
+            response_format_param = None
+            if isinstance(response_format, dict):
+                fmt_type = response_format.get("response_format", "text")
+                if fmt_type == "json_object":
+                    response_format_param = {"type": "json_object"}
+                    json_schema = response_format.get("json_schema", "{}").strip()
+                    if json_schema:
+                        try:
+                            response_format_param["schema"] = json.loads(json_schema)
+                        except json.JSONDecodeError:
+                            response_format_param["schema"] = json_schema
+                else:
+                    response_format_param = {"type": fmt_type}
+            else:
+                # Fallback for simple string if it happens
+                response_format_param = {"type": str(response_format)}
 
             # Generate response using global LLM
             response = _global_llm.create_chat_completion(
@@ -406,6 +446,9 @@ class LlamaCPPEngine(ComfyNodeABC):
                 top_p=top_p,
                 top_k=top_k,
                 repeat_penalty=repeat_penalty,
+                present_penalty=present_penalty,
+                frequency_penalty=frequency_penalty,
+                min_p=min_p,
                 seed=seed,
                 response_format=response_format_param,
             )
@@ -423,30 +466,32 @@ class LlamaCPPEngine(ComfyNodeABC):
             response_text = f"Error generating response: {str(e)}"
             print(f"LlamaCPP Engine Error: {str(e)}")
 
-        return (response_text,)
+        return io.NodeOutput(response_text)
 
 
-class LlamaCPPMemoryCleanup(ComfyNodeABC):
+class LlamaCPPMemoryCleanup(io.ComfyNode):
+    """Manually triggers memory cleanup."""
     @classmethod
-    def INPUT_TYPES(cls) -> InputTypeDict:
-        return {
-            "required": {
-                "memory_cleanup": (["close", "backend_free", "full_cleanup", "persistent"], {"default": "close", "tooltip": "Memory cleanup method"}),
-            },
-            "optional": {
-                "passthrough": (IO.ANY, {"tooltip": "Any input to pass through"}),
-            }
-        }
+    def define_schema(cls) -> io.Schema:
+        template = io.MatchType.Template("passthrough")
+        return io.Schema(
+            node_id="LlamaCPPMemoryCleanup",
+            display_name="Llama CPP Memory Cleanup",
+            category="LlamaCPP",
+            inputs=[
+                io.Combo.Input("memory_cleanup", options=["close", "backend_free", "full_cleanup", "persistent"], default="close", tooltip="Memory cleanup method"),
+                io.MatchType.Input("passthrough", template=template, tooltip="Any input to pass through", optional=True),
+            ],
+            outputs=[
+                io.MatchType.Output(template=template, display_name="PASSTHROUGH")
+            ]
+        )
 
-    RETURN_TYPES = (IO.ANY,)
-    RETURN_NAMES = ("passthrough",)
-    FUNCTION = "cleanup"
-    CATEGORY = "LlamaCPP"
-
-    def cleanup(self, memory_cleanup: str, passthrough=None) -> tuple:
+    @classmethod
+    def execute(cls, memory_cleanup: str, passthrough=None) -> io.NodeOutput:
         try:
             _cleanup_global_llm(memory_cleanup)
         except Exception as e:
             print(f"LlamaCPP Memory Cleanup Error: {str(e)}")
 
-        return (passthrough,)
+        return io.NodeOutput(passthrough)

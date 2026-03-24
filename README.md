@@ -5,11 +5,11 @@ allows the user to generate text responses from prompts using llama.cpp.
 
 ![Screenshot](assets/node_preview.png)
 
-## Features
-
 - Load and use GGUF models (including vision models)
 - Generate text prompts using llama.cpp
-- Support for multi-modal inputs (images)
+- Support for multi-modal inputs (multiple images/batches)
+- Advanced sampling (Min-P, Presence/Frequency penalties)
+- JSON Schema support for structured output (json_object)
 - Memory management options
 - Integration with ComfyUI workflows
 
@@ -41,7 +41,7 @@ Loads GGUF model files and prepares them for use.
   - `mmproj_model_name`: Multi-modal projector model for vision (default: `None`).
 
 **Outputs**
-- `model`: The loaded Llama model object.
+- `MODEL`: The loaded Llama model object.
 
 ### LlamaCPPOptions
 Configures advanced parameters for the model.
@@ -52,13 +52,14 @@ Configures advanced parameters for the model.
   - `n_ctx`: Context window size (default: `2048`).
   - `n_threads`: CPU threads to use (default: `-1` for auto).
   - `n_threads_batch`: Threads for batch processing (default: `-1` for auto).
-  - `n_batch`: Batch size (default: `512`).
+  - `n_batch`: Batch size (default: `2048`).
   - `n_ubatch`: Micro-batch size (default: `512`).
   - `main_gpu`: Main GPU ID (default: `0`).
   - `offload_kqv`: Offload K/Q/V to GPU (default: `Enabled`).
   - `numa`: NUMA support (default: `Disabled`).
   - `use_mmap`: Memory mapping (default: `Enabled`).
   - `use_mlock`: Memory locking (default: `Disabled`).
+  - `use_direct_io`: Enable direct I/O for library (Linux only, default: `Disabled`).
   - `verbose`: Verbose logging (default: `Disabled`).
   - `vision_use_gpu`: Enable GPU for vision handler (default: `Enabled`).
   - `vision_image_min_tokens`: Minimum image tokens (default: `-1`).
@@ -68,7 +69,7 @@ Configures advanced parameters for the model.
   - `vision_add_vision_id`: Add vision ID for QwenVL models (default: `Enabled`).
 
 **Outputs**
-- `options`: A configuration dictionary.
+- `OPTIONS`: A configuration dictionary.
 
 ### LlamaCPPEngine
 The main generation node.
@@ -78,20 +79,24 @@ The main generation node.
   - `model`: The model from `LlamaCPPModelLoader`.
   - `prompt`: The text prompt.
 - **Optional**:
-  - `image`: Input image for vision models.
+  - `images`: Input image(s) for vision models (supports batches).
   - `options`: Options from `LlamaCPPOptions`.
   - `system_prompt`: System instruction (default: empty).
   - `memory_cleanup`: Strategy to clean memory after generation (default: `close`).
   - `response_format`: `text` or `json_object` (default: `text`).
+  - `json_schema`: JSON Schema to enforce (available only when `json_object` is selected).
   - `max_tokens`: Max new tokens (default: `512`).
   - `temperature`: Randomness (default: `0.2`).
   - `top_p`: Nucleus sampling (default: `0.95`).
-  - `top_k`: Top-k sampling (default: `100`).
-  - `repeat_penalty`: Penalty for repetition (default: `1.0`).
+  - `top_k`: Top-k sampling (default: `40`).
+  - `min_p`: Min-p sampling (default: `0.05`).
+  - `repeat_penalty`: Penalty for repetition (default: `1.1`).
+  - `present_penalty`: Penalty for presence of tokens (default: `0.0`).
+  - `frequency_penalty`: Penalty for frequency of tokens (default: `0.0`).
   - `seed`: Random seed (default: `-1`).
 
 **Outputs**
-- `response`: The generated text.
+- `RESPONSE`: The generated text.
 
 ### LlamaCPPMemoryCleanup
 Utility to manually free resources.
@@ -103,7 +108,7 @@ Utility to manually free resources.
   - `passthrough`: Any input to pass through (allows chaining).
 
 **Outputs**
-- `passthrough`: The input passed through unmodified.
+- `PASSTHROUGH`: The input passed through unmodified.
 
 ## Custom Model Folders
 
