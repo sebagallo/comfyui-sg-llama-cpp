@@ -333,10 +333,8 @@ class LlamaCPPEngine(io.ComfyNode):
                 messages.append({"role": "system", "content": system_prompt.strip()})
 
             # Create user message content
-            user_content = [{"type": "text", "text": prompt.strip()}]
-
-            # If vision is enabled and images are provided, convert images and create structured content
             if vision_enabled and images is not None:
+                user_content = [{"type": "text", "text": prompt.strip()}]
                 # images is (B, H, W, C)
                 B = images.shape[0]
                 for i in range(B):
@@ -346,8 +344,9 @@ class LlamaCPPEngine(io.ComfyNode):
                         "type": "image_url",
                         "image_url": {"url": data_uri}
                     })
-
-            messages.append({"role": "user", "content": user_content})
+                messages.append({"role": "user", "content": user_content})
+            else:
+                messages.append({"role": "user", "content": prompt.strip()})
 
             # Prepare Llama initialization parameters
             llama_kwargs = {
