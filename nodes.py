@@ -296,7 +296,7 @@ class LlamaCPPEngine(io.ComfyNode):
                 io.Int.Input("top_k", default=40, min=0, max=400, tooltip="Top-k sampling", optional=True),
                 io.Float.Input("min_p", default=0.05, min=0.0, max=1.0, step=0.01, tooltip="Min-p sampling", optional=True),
                 io.Float.Input("repeat_penalty", default=1.1, min=1.0, max=5.0, step=0.01, tooltip="Repeat penalty", optional=True),
-                io.Float.Input("present_penalty", default=0.0, min=0.0, max=5.0, step=0.01, tooltip="Present penalty", optional=True),
+                io.Float.Input("presence_penalty", default=0.0, min=0.0, max=5.0, step=0.01, tooltip="Presence penalty", optional=True),
                 io.Float.Input("frequency_penalty", default=0.0, min=0.0, max=5.0, step=0.01, tooltip="Frequency penalty", optional=True),
                 io.Int.Input("seed", default=1, min=-sys.maxsize, max=sys.maxsize, control_after_generate=True, tooltip="Random seed", optional=True),
             ],
@@ -306,7 +306,7 @@ class LlamaCPPEngine(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, model: Dict[str, Any], prompt: str, images: torch.Tensor = None, options: Dict[str, Any] = None, system_prompt: str = "", memory_cleanup: str = "close", response_format: Dict[str, Any] = {"type": "text"}, max_tokens: int = 512, temperature: float = 0.2, top_p: float = 0.95, top_k: int = 40, min_p: float = 0.05, repeat_penalty: float = 1.1, present_penalty: float = 0.0, frequency_penalty: float = 0.0, seed: int = -1) -> io.NodeOutput:
+    def execute(cls, model: Dict[str, Any], prompt: str, images: torch.Tensor = None, options: Dict[str, Any] = None, system_prompt: str = "", memory_cleanup: str = "close", response_format: Dict[str, Any] = {"type": "text"}, max_tokens: int = 512, temperature: float = 0.2, top_p: float = 0.95, top_k: int = 40, min_p: float = 0.05, repeat_penalty: float = 1.1, presence_penalty: float = 0.0, frequency_penalty: float = 0.0, seed: int = -1) -> io.NodeOutput:
         global _global_llm
         try:
             # Validate inputs
@@ -426,7 +426,7 @@ class LlamaCPPEngine(io.ComfyNode):
                 top_p=top_p,
                 top_k=top_k,
                 repeat_penalty=repeat_penalty,
-                present_penalty=present_penalty,
+                presence_penalty=presence_penalty,
                 frequency_penalty=frequency_penalty,
                 min_p=min_p,
                 seed=seed,
